@@ -37,6 +37,25 @@
 /* Include HTrie for test. */
 #include "../core/htrie.c"
 
+/* Only several functions are required from tempesta-lib module */
+void
+memcpy_fast(void *to, const void *from, size_t len)
+{
+	memcpy(to, from, len);
+}
+
+int
+memcmp_fast(const void *a, const void *b, size_t len)
+{
+	return memcmp(a, b, len);
+}
+
+void
+bzero_fast(void *s, size_t len)
+{
+	memset(s, 0, len);
+}
+
 /*
  * HTrie requires extent-aligned address.
  * These are just some good addresses to be mapped to.
@@ -213,20 +232,20 @@ tdb_htrie_open(void *addr, const char *fname, size_t size, int *fd)
 
 	if (sb.st_size != size)
 		if (fallocate(*fd, 0, 0, size)) {
-			perror("ERROR: fallocate failure");
+			perror("ERROR: fallocate failure\n");
 			exit(1);
 		}
 
 	/* Use MAP_SHARED to carry changes to underlying file. */
 	p = mmap(addr, size, PROT_READ | PROT_WRITE, MAP_SHARED, *fd, 0);
 	if (p != addr) {
-		perror("ERROR: cannot mmap the file");
+		perror("ERROR: cannot mmap the file\n");
 		exit(1);
 	}
 	printf("maped to %p\n", p);
 
 	if (mlock(p, size)) {
-		perror("ERROR: mlock failure, please check rlimit");
+		perror("ERROR: mlock failure, please check rlimit\n");
 		exit(1);
 	}
 
@@ -578,7 +597,7 @@ main(int argc, char *argv[])
 
 	/* Don't forget to set appropriate system hard limit. */
 	if (setrlimit(RLIMIT_MEMLOCK, &rlim))
-		TDB_ERR("cannot set RLIMIT_MEMLOCK");
+		TDB_ERR("cannot set RLIMIT_MEMLOCK\n");
 
 	__get_cpuid(1, &eax, &ebx, &ecx, &edx);
 	   
