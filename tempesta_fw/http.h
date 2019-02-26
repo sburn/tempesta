@@ -381,7 +381,6 @@ typedef struct {
  * @nip_list	- member in the queue of non-idempotent requests;
  * @method	- HTTP request method, one of GET/PORT/HEAD/etc;
  * @node	- NUMA node where request is serviced;
- * @frang_st	- current state of FRANG classifier;
  * @chunk_cnt	- header or body chunk count for Frang classifier;
  * @jtxtstamp	- time the request is forwarded to a server, in jiffies;
  * @jrxtstamp	- time the request is received from a client, in jiffies;
@@ -409,7 +408,6 @@ struct tfw_http_req_t {
 	struct list_head	nip_list;
 	unsigned char		method;
 	unsigned short		node;
-	unsigned int		frang_st;
 	unsigned int		chunk_cnt;
 	unsigned long		jtxtstamp;
 	unsigned long		jrxtstamp;
