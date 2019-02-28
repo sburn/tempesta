@@ -872,10 +872,9 @@ frang_http_req_trailer_check(FrangAcc *ra, TfwConn *conn,
 	if (!r)
 		r = frang_http_req_hdrs_check(ra, conn, data);
 
-#if 0
-	if (!tfw_http_parse_is_done(TfwHttpMsg *)data->req))
+	if (!tfw_http_parse_is_done((TfwHttpMsg *)data->req))
 		return TFW_POSTPONE;
-#endif
+
 	/*
 	 * TODO: return TFW_BLOCK if the same header appear in both main and
 	 * trailer headers part. Some intermediates doesn't read trailers, so

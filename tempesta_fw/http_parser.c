@@ -57,6 +57,8 @@ enum {
 	RGen_BodyReadChunk,
 	RGen_BodyEoL,
 	RGen_BodyCR,
+
+	RGen_Parsed,
 };
 
 /**
@@ -153,7 +155,8 @@ do {									\
 
 #define __FSM_FINISH(m)							\
 done:									\
-	parser->state = __fsm_const_state;				\
+	/* Return code TFW_PASS means that the message is fully parsed. */\
+	parser->state = (!r) ? RGen_Parsed : __fsm_const_state;		\
 	/* Remaining number of bytes to process in the data chunk. */	\
 	*parsed = __data_off(p);
 
@@ -5349,3 +5352,13 @@ tfw_http_parse_resp(void *resp_data, unsigned char *data, size_t len,
 
 	return r;
 }
+
+bool
+tfw_http_parse_is_done(TfwHttpMsg *hm)
+{
+	TfwHttpParser *parser = &hm->conn->parser;
+
+	return unlikely(hm != (TfwHttpMsg *)hm->conn->msg)
+	       || (parser->state == RGen_Parsed);
+}
+
