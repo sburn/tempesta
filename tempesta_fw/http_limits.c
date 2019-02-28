@@ -863,7 +863,11 @@ frang_http_req_trailer_check(FrangAcc *ra, TfwConn *conn,
 			     TfwFsmData *data)
 {
 	int r = TFW_PASS;
+	TfwHttpMsg *hmreq = (TfwHttpMsg *)data->req;
+	const TfwStr *field, *end, *dup, *dup_end;
 
+	if (!test_bit(TFW_HTTP_B_CHUNKED_TRAILER, hmreq->flags))
+		return TFW_PASS;
 	/*
 	 * Don't use special settings for the trailer part, keep on
 	 * using body limits.
@@ -871,15 +875,29 @@ frang_http_req_trailer_check(FrangAcc *ra, TfwConn *conn,
 	r = frang_http_req_incomplete_body_check(ra, conn, data);
 	if (!r)
 		r = frang_http_req_hdrs_check(ra, conn, data);
+	if (r)
+		return r;
 
-	if (!tfw_http_parse_is_done((TfwHttpMsg *)data->req))
+	if (!tfw_http_parse_is_done(hmreq))
 		return TFW_POSTPONE;
-
 	/*
-	 * TODO: return TFW_BLOCK if the same header appear in both main and
+	 * Block request if the same header appear in both main and
 	 * trailer headers part. Some intermediates doesn't read trailers, so
 	 * request processing may differ.
 	 */
+	FOR_EACH_HDR_FIELD(field, end, hmreq) {
+		int trailers = 0, dups = 0;
+		TFW_STR_FOR_EACH_DUP(dup, field, dup_end) {
+			trailers += !!(dup->flags & TFW_STR_TRAILER);
+			dups += 1;
+		}
+		if (trailers && (dups != trailers)) {
+			frang_msg("HTTP field appear in header and trailer "
+				  "for client %p",
+				  &FRANG_ACC2CLI(ra)->addr, "\n");
+			return TFW_BLOCK;
+		}
+	}
 
 	return r;
 }

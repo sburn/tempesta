@@ -706,6 +706,15 @@ __hbh_parser_add_data(TfwHttpMsg *hm, char *data, unsigned long len, bool last)
 	return 0;
 }
 
+static void
+mark_trailer_hdr(TfwHttpMsg *hm, TfwStr *hdr)
+{
+	if (hm->crlf.flags & TFW_STR_COMPLETE) {
+		hdr->flags |= TFW_STR_TRAILER;
+		__set_bit(TFW_HTTP_B_CHUNKED_TRAILER, hm->flags);
+	}
+}
+
 /* Helping (inferior) states to process particular parts of HTTP message. */
 enum {
 	I_0, /* initial state */
@@ -944,6 +953,7 @@ __FSM_STATE(st_curr) {							\
 		/* The header value is fully parsed, move forward. */	\
 		if (saveval)						\
 			__msg_hdr_chunk_fixup(p, __fsm_n);		\
+		mark_trailer_hdr(msg, &parser->hdr);			\
 		parser->_i_st = RGen_EoL;				\
 		parser->_hdr_tag = id;					\
 		__FSM_MOVE_n(RGen_OWS, __fsm_n); /* skip OWS */		\
@@ -985,6 +995,7 @@ __FSM_STATE(st_curr) {							\
 		if (saveval)						\
 			__msg_hdr_chunk_fixup(p, __fsm_n);		\
 		mark_raw_hbh(msg, &parser->hdr);			\
+		mark_trailer_hdr(msg, &parser->hdr);			\
 		parser->_i_st = RGen_EoL;				\
 		parser->_hdr_tag = TFW_HTTP_HDR_RAW;			\
 		__FSM_MOVE_n(RGen_OWS, __fsm_n); /* skip OWS */		\
@@ -1023,6 +1034,7 @@ __FSM_STATE(RGen_HdrOtherV) {						\
 		TFW_PARSER_BLOCK(RGen_HdrOtherV);			\
 	__msg_hdr_chunk_fixup(data, __data_off(p + __fsm_sz)); 		\
 	mark_raw_hbh(msg, &parser->hdr);				\
+	mark_trailer_hdr(msg, &parser->hdr);				\
 	__FSM_MOVE_n(RGen_EoL, __fsm_sz);				\
 }
 
