@@ -638,36 +638,6 @@ frang_http_host_check(const TfwHttpReq *req, FrangAcc *ra)
 	return ret;
 }
 
-/**
- * Monotonically increasing time quantums. The configured @tframe
- * is divided by FRANG_FREQ slots to get the quantums granularity.
- */
-static unsigned int
-frang_resp_quantum(unsigned short tframe)
-{
-	return jiffies * FRANG_FREQ / (tframe * HZ);
-}
-
-static int
-frang_bad_resp_limit(FrangAcc *ra, FrangHttpRespCodeBlock *resp_cblk)
-{
-	FrangRespCodeStat *stat = ra->resp_code_stat;
-	unsigned long cnt = 0;
-	const unsigned int ts = frang_resp_quantum(resp_cblk->tf);
-	int i = 0;
-
-	for (; i < FRANG_FREQ; ++i) {
-		if (frang_time_in_frame(ts, stat[i].ts))
-			cnt += stat[i].cnt;
-	}
-	if (cnt > resp_cblk->limit) {
-		frang_limmsg("http_resp_code_block limit", cnt,
-			     resp_cblk->limit, &FRANG_ACC2CLI(ra)->addr);
-		return TFW_BLOCK;
-	}
-	return TFW_PASS;
-}
-
 /*
  * The GFSM states aren't hookable, so don't open the states definitions and
  * only start and finish states are present.
@@ -917,12 +887,9 @@ frang_http_req_process(FrangAcc *ra, TfwConn *conn, TfwFsmData *data)
 	T_FSM_STATE(TFW_FRANG_REQ_FSM_INIT) {
 		__FRANG_CFG_VAR(req_burst, req_burst);
 		__FRANG_CFG_VAR(req_rate, req_rate);
-		__FRANG_CFG_VAR(resp_cblk, http_resp_code_block);
 
 		if (req_burst || req_rate)
 			r = frang_req_limit(ra, req_burst, req_rate);
-		if (r == TFW_PASS && resp_cblk)
-			r = frang_bad_resp_limit(ra, resp_cblk);
 		/* Set the time the header started coming in. */
 		req->tm_header = jiffies;
 
@@ -1081,22 +1048,66 @@ frang_resp_process(TfwHttpResp *resp)
 	return r;
 }
 
-/*
- * Check response code and record it if it's listed in the filter.
- * Called from tfw_http_resp_fwd() by tfw_gfsm_move()
- * Always returns TFW_PASS because this handler is needed
- * for collecting purposes only.
+/**
+ * Monotonically increasing time quantums. The configured @tframe
+ * is divided by FRANG_FREQ slots to get the quantums granularity.
+ */
+static inline unsigned int
+frang_resp_quantum(unsigned short tframe)
+{
+	return jiffies * FRANG_FREQ / (tframe * HZ);
+}
+
+static int
+frang_resp_code_limit(FrangAcc *ra, FrangHttpRespCodeBlock *resp_cblk)
+{
+	FrangRespCodeStat *stat = ra->resp_code_stat;
+	unsigned long cnt = 0;
+	const unsigned int ts = frang_resp_quantum(resp_cblk->tf);
+	int i = 0;
+
+	i = ts % FRANG_FREQ;
+	if (ts != stat[i].ts) {
+		stat[i].ts = ts;
+		stat[i].cnt = 1;
+	} else {
+		++stat[i].cnt;
+	}
+	for (i = 0; i < FRANG_FREQ; ++i) {
+		if (frang_time_in_frame(ts, stat[i].ts))
+			cnt += stat[i].cnt;
+	}
+	if (cnt > resp_cblk->limit) {
+		frang_limmsg("http_resp_code_block limit", cnt,
+			     resp_cblk->limit, &FRANG_ACC2CLI(ra)->addr);
+		return TFW_BLOCK;
+	}
+
+	return TFW_PASS;
+}
+
+/**
+ * Block client connection if not allowed response code appears too frequently
+ * in responses for that client. Called from tfw_http_resp_fwd() by
+ * tfw_gfsm_move().
+ * Always returns TFW_PASS because there is no error in processing response,
+ * client may do something illegal and is to be blocked. Allow upper levels
+ * to continue working with the response and the server connection.
  */
 static int
 frang_resp_fwd_process(TfwHttpResp *resp)
 {
-	unsigned int ts, i;
 	FrangAcc *ra;
 	FrangRespCodeStat *stat;
 	TfwHttpReq *req = resp->req;
-	__FRANG_CFG_VAR(conf, http_resp_code_block);
+	__FRANG_CFG_VAR(resp_cblk, http_resp_code_block);
+	int r;
 
-	if (!conf)
+	/*
+	 * Request may be originated form Health Monitor, thus it there may be
+	 * no client connection.
+	 */
+	if (!req->conn || !resp_cblk)
 		return TFW_PASS;
 
 	ra = (FrangAcc *)req->conn->sk->sk_security;
@@ -1107,21 +1118,18 @@ frang_resp_fwd_process(TfwHttpResp *resp)
 		  &FRANG_ACC2CLI(ra)->addr, resp->status, ra);
 
 	if (!tfw_http_resp_code_range(resp->status)
-	    || !test_bit(HTTP_CODE_BIT_NUM(resp->status), conf->codes))
+	    || !test_bit(HTTP_CODE_BIT_NUM(resp->status), resp_cblk->codes))
 		return TFW_PASS;
 
 	spin_lock(&ra->lock);
-
-	ts = frang_resp_quantum(conf->tf);
-	i = ts % FRANG_FREQ;
-	if (ts != stat[i].ts) {
-		stat[i].ts = ts;
-		stat[i].cnt = 1;
-	} else {
-		++stat[i].cnt;
-	}
-
+	r = frang_resp_code_limit(ra, resp_cblk);
 	spin_unlock(&ra->lock);
+
+	if (r == TFW_BLOCK) {
+		tfw_connection_close(req->conn, true);
+		if (tfw_vhost_global_frang_cfg()->ip_block)
+			tfw_filter_block_ip(&FRANG_ACC2CLI(ra)->addr);
+	}
 
 	return TFW_PASS;
 }
@@ -1207,7 +1215,7 @@ static FrangGfsmHook frang_gfsm_hooks[] = {
 		.prio		= -1,
 		.hook_state	= TFW_HTTP_FSM_RESP_MSG_FWD,
 		.fsm_id		= TFW_FSM_FRANG_RESP,
-		.st0		= TFW_FRANG_RESP_FSM_INIT,
+		.st0		= TFW_FRANG_RESP_FSM_FWD,
 		.name		= "response_fwd",
 	},
 };
