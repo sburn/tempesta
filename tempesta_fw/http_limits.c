@@ -742,11 +742,8 @@ frang_http_req_hdrs_check(FrangAcc *ra, TfwConn *conn,
 	}
 
 	/* Ensure that length of all parsed headers fields is within limits. */
-	if (field_len) {
-		r = frang_http_field_len(req, ra, field_len);
-		if (r)
-			goto block;
-	}
+	if (field_len && (r = frang_http_field_len(req, ra, field_len)))
+		goto block;
 
 	return TFW_PASS;
 block:
@@ -763,11 +760,8 @@ frang_http_req_incomplete_hdrs_check(FrangAcc *ra, TfwConn *conn,
 	__FRANG_CFG_VAR(hdr_tmt, clnt_hdr_timeout);
 	__FRANG_CFG_VAR(hchnk_cnt, http_hchunk_cnt);
 
-	BUG_ON(!ra);
-	BUG_ON(req != container_of(conn->msg, TfwHttpReq, msg));
 	frang_dbg("check incomplete request headers for client %s, acc=%p\n",
 		  &FRANG_ACC2CLI(ra)->addr, ra);
-
 	/*
 	 * There's no need to check for header timeout if this is the very
 	 * first chunk of a request (first full separate SKB with data).
@@ -791,12 +785,10 @@ frang_http_req_incomplete_hdrs_check(FrangAcc *ra, TfwConn *conn,
 	 * in HTTP status line. The rationale for not making this one of FSM
 	 * states is the same as for the code block above.
 	 */
-	if (hchnk_cnt) {
-		if (req->chunk_cnt > hchnk_cnt) {
-			frang_limmsg("HTTP header chunk count", req->chunk_cnt,
-				     hchnk_cnt, &FRANG_ACC2CLI(ra)->addr);
-			goto block;
-		}
+	if (hchnk_cnt && (req->chunk_cnt > hchnk_cnt)) {
+		frang_limmsg("HTTP header chunk count", req->chunk_cnt,
+			     hchnk_cnt, &FRANG_ACC2CLI(ra)->addr);
+		goto block;
 	}
 
 	return frang_http_req_hdrs_check(ra, conn, data);
@@ -814,14 +806,12 @@ frang_http_req_incomplete_body_check(FrangAcc *ra, TfwConn *conn,
 	__FRANG_CFG_VAR(bchunk_cnt, http_bchunk_cnt);
 	struct sk_buff *skb = data->skb;
 
-	BUG_ON(!ra);
-	BUG_ON(req != container_of(conn->msg, TfwHttpReq, msg));
 	frang_dbg("check incomplete request body for client %s, acc=%p\n",
 		  &FRANG_ACC2CLI(ra)->addr, ra);
+
 	/* CLRF after headers was parsed, but the body didn't arrive yet. */
 	if (TFW_STR_EMPTY(&req->body))
 		return TFW_PASS;
-
 	/*
 	 * Ensure that HTTP request body is coming without delays.
 	 * The timeout is between chunks of the body, so reset
@@ -972,7 +962,8 @@ frang_http_req_process(FrangAcc *ra, TfwConn *conn, TfwFsmData *data)
 		__FRANG_CFG_VAR(ct_required, http_ct_required);
 		__FRANG_CFG_VAR(ct_vals, http_ct_vals);
 
-		r = frang_http_req_incomplete_hdrs_check(ra, conn, data);
+		if ((r = frang_http_req_incomplete_hdrs_check(ra, conn, data)))
+			T_FSM_EXIT();
 		/* Headers are not fully parsed yet. */
 		if (!(req->crlf.flags & TFW_STR_COMPLETE))
 			__FRANG_FSM_POSTPONE();
@@ -982,19 +973,14 @@ frang_http_req_process(FrangAcc *ra, TfwConn *conn, TfwFsmData *data)
 		 */
 
 		/* Ensure presence and the value of Host: header field. */
-		if (host_required)
-			r = frang_http_host_check(req, ra);
-		if (r)
+		if (host_required && (r = frang_http_host_check(req, ra)))
 			T_FSM_EXIT();
-
 		/*
 		 * Ensure presence of Content-Type: header field.
 		 * Ensure that the value is one of those defined by a user.
 		 */
 		if (ct_required || ct_vals)
 			r = frang_http_ct_check(req, ra, ct_vals);
-		if (r)
-			T_FSM_EXIT();
 
 		__FRANG_FSM_MOVE(TFW_FRANG_REQ_HDRS_ALLOWED);
 	}
@@ -1004,7 +990,7 @@ frang_http_req_process(FrangAcc *ra, TfwConn *conn, TfwFsmData *data)
 	 * Set the time the body started coming in.
 	 */
 	T_FSM_STATE(TFW_FRANG_REQ_HDRS_ALLOWED) {
-		req->chunk_cnt = 0; /* start counting body chunks now */
+		req->chunk_cnt = 0; /* start counting body chunks now. */
 		req->tm_bchunk = jiffies;
 		__FRANG_FSM_MOVE(TFW_FRANG_REQ_BODY_INCOMPLETE);
 	}
@@ -1013,7 +999,8 @@ frang_http_req_process(FrangAcc *ra, TfwConn *conn, TfwFsmData *data)
 	 * Body is not fully parsed, a new body chunk was received.
 	 */
 	T_FSM_STATE(TFW_FRANG_REQ_BODY_INCOMPLETE) {
-		r = frang_http_req_incomplete_body_check(ra, conn, data);
+		if ((r = frang_http_req_incomplete_body_check(ra, conn, data)))
+			T_FSM_EXIT();
 		/* Body is not fully parsed yet. */
 		if (!(req->body.flags & TFW_STR_COMPLETE))
 			__FRANG_FSM_POSTPONE();
