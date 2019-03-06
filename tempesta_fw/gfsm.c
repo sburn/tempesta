@@ -209,6 +209,18 @@ tfw_gfsm_dispatch(TfwGState *st, void *obj, TfwFsmData *data)
 }
 
 /**
+ * Move the FSM with descriptor @st to new the state @state and DON'T call
+ * registered hooks for it.
+ */
+void
+__tfw_gfsm_move(TfwGState *st, unsigned short state)
+{
+	TFW_DBG3("GFSM move %#x -> %#x\n", FSM_STATE(st), state);
+
+	SET_STATE(st, state);
+}
+
+/**
  * Move the FSM with descriptor @st to new the state @state and call all
  * registered hooks for it.
  *

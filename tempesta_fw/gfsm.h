@@ -192,6 +192,7 @@ typedef int (*tfw_gfsm_handler_t)(void *obj, TfwFsmData *data);
 void tfw_gfsm_state_init(TfwGState *st, void *obj, int st0);
 int tfw_gfsm_dispatch(TfwGState *st, void *obj, TfwFsmData *data);
 int tfw_gfsm_move(TfwGState *st, unsigned short state, TfwFsmData *data);
+void __tfw_gfsm_move(TfwGState *st, unsigned short state);
 
 #ifdef DEBUG
 void tfw_gfsm_debug_state(TfwGState *st, const char *msg);

@@ -673,15 +673,11 @@ enum {
 	TFW_FRANG_RESP_FSM_DONE	= TFW_GFSM_FRANG_RESP_STATE(TFW_GFSM_STATE_LAST)
 };
 
-/* Extend basic FSM with necessary ad-hoc logic. */
-#define FSM_HDR_STATE(state)						\
-	((state > Frang_Req_Hdr_Start) && (state < Frang_Req_Hdr_NoState))
-
 #define __FRANG_FSM_MOVE(st)						\
 	T_FSM_MOVE(st, {						\
 	if (!r)								\
-		r = tfw_gfsm_move(&conn->state, (st), data);		\
-	if (r)								\
+		__tfw_gfsm_move(&conn->state, (st));			\
+	else								\
 		T_FSM_EXIT();						\
 	} )
 
@@ -980,11 +976,8 @@ frang_http_req_process(FrangAcc *ra, TfwConn *conn, TfwFsmData *data)
 	 */
 	T_FSM_STATE(TFW_FRANG_REQ_BODY_ALLOWED) {
 		r = frang_http_req_trailer_check(ra, conn, data);
-		__FRANG_FSM_MOVE(TFW_FRANG_REQ_FSM_DONE);
-	}
-
-	/* All limits are verified for current request. */
-	T_FSM_STATE(TFW_FRANG_REQ_FSM_DONE) {
+		if (!r)
+			__tfw_gfsm_move(&conn->state, TFW_FRANG_REQ_FSM_DONE);
 		T_FSM_EXIT();
 	}
 
@@ -1033,9 +1026,10 @@ frang_resp_process(TfwHttpResp *resp)
 	if (!body_len)
 		return TFW_PASS;
 
-	ra = (FrangAcc *)req->conn->sk->sk_security;
 	if (req->peer)
 		ra = FRANG_CLI2ACC(req->peer);
+	else
+		ra = (FrangAcc *)req->conn->sk->sk_security;
 
 	/* Ensure message body size doesn't overcome acceptable limits. */
 	if ((resp->content_length > body_len) || (resp->body.len > body_len)) {
@@ -1157,7 +1151,7 @@ frang_resp_handler(void *obj, TfwFsmData *data)
 
 	if (r != TFW_PASS)
 		return r;
-	r = tfw_gfsm_move(&conn->state, TFW_FRANG_RESP_FSM_DONE, data);
+	__tfw_gfsm_move(&conn->state, TFW_FRANG_RESP_FSM_DONE);
 
 	return r;
 }
