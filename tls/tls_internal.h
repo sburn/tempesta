@@ -359,8 +359,7 @@ enum {
  */
 #define TTLS_HS_FSM_FINISH()						\
 	T_FSM_FINISH(r, tls->state);					\
-	*read += p - buf;						\
-	io->rlen += p - buf;
+	*read += p - buf;
 
 /* Move to @st if we have some bytes to process. */
 #define TTLS_HS_FSM_MOVE(st)						\
