@@ -739,8 +739,10 @@ frang_http_req_incomplete_hdrs_check(FrangAcc *ra, TfwConn *conn,
 		unsigned long delta = hdr_tmt;
 
 		if (time_is_before_jiffies(start + delta)) {
-			frang_limmsg("client header timeout", jiffies - start,
-				     delta, &FRANG_ACC2CLI(ra)->addr);
+			frang_limmsg("client header timeout",
+				     jiffies_to_msecs(jiffies - start),
+				     jiffies_to_msecs(delta),
+				     &FRANG_ACC2CLI(ra)->addr);
 			goto block;
 		}
 	}
@@ -787,7 +789,8 @@ frang_http_req_incomplete_body_check(FrangAcc *ra, TfwConn *conn,
 
 		if (time_is_before_jiffies(start + delta)) {
 			frang_limmsg("client body timeout",
-				     jiffies - start, delta,
+				     jiffies_to_msecs(jiffies - start),
+				     jiffies_to_msecs(delta),
 				     &FRANG_ACC2CLI(ra)->addr);
 			goto block;
 		}
