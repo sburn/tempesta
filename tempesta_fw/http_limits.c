@@ -647,20 +647,18 @@ frang_http_host_check(const TfwHttpReq *req, FrangAcc *ra)
 enum {
 	/* Initial Frang Req state, not hookable */
 	TFW_FRANG_REQ_FSM_INIT	= TFW_GFSM_FRANG_REQ_STATE(0),
-	/* New request is allowed on the client connection. */
-	TFW_FRANG_REQ_NEW_ALLOWED = TFW_GFSM_FRANG_REQ_STATE(1),
-	/* Request method is allowed. */
-	TFW_FRANG_REQ_METH_ALLOWED = TFW_GFSM_FRANG_REQ_STATE(2),
-	/* Request uri is allowed. */
-	TFW_FRANG_REQ_URI_ALLOWED = TFW_GFSM_FRANG_REQ_STATE(3),
-	/* Request headers are not parsed fully. */
-	TFW_FRANG_REQ_HDRS_INCOMPLETE = TFW_GFSM_FRANG_REQ_STATE(4),
-	/* Request headers are validated. */
-	TFW_FRANG_REQ_HDRS_ALLOWED = TFW_GFSM_FRANG_REQ_STATE(5),
-	/* Request body is not parsed fully. */
-	TFW_FRANG_REQ_BODY_INCOMPLETE = TFW_GFSM_FRANG_REQ_STATE(6),
+	/* Validate request method. */
+	TFW_FRANG_REQ_METH = TFW_GFSM_FRANG_REQ_STATE(1),
+	/* Validate URI string. */
+	TFW_FRANG_REQ_URI = TFW_GFSM_FRANG_REQ_STATE(2),
+	/* Validate request headers. */
+	TFW_FRANG_REQ_HDRS = TFW_GFSM_FRANG_REQ_STATE(3),
+	/* Headers are validated, proceed to the body. */
+	TFW_FRANG_REQ_BODY_START = TFW_GFSM_FRANG_REQ_STATE(4),
+	/* Validate request body. */
+	TFW_FRANG_REQ_BODY = TFW_GFSM_FRANG_REQ_STATE(5),
 	/* Full body is valid, but some final checks are to be performed. */
-	TFW_FRANG_REQ_BODY_ALLOWED = TFW_GFSM_FRANG_REQ_STATE(7),
+	TFW_FRANG_REQ_TRAILER = TFW_GFSM_FRANG_REQ_STATE(6),
 
 	TFW_FRANG_REQ_FSM_DONE	= TFW_GFSM_FRANG_REQ_STATE(TFW_GFSM_STATE_LAST)
 };
@@ -889,11 +887,11 @@ frang_http_req_process(FrangAcc *ra, TfwConn *conn, TfwFsmData *data)
 		/* Set the time the header started coming in. */
 		req->tm_header = jiffies;
 
-		__FRANG_FSM_MOVE(TFW_FRANG_REQ_NEW_ALLOWED);
+		__FRANG_FSM_MOVE(TFW_FRANG_REQ_METH);
 	}
 
-	/*Ensure that HTTP request method is one of those defined by a user. */
-	T_FSM_STATE(TFW_FRANG_REQ_NEW_ALLOWED) {
+	/* Ensure that HTTP request method is one of those defined by a user. */
+	T_FSM_STATE(TFW_FRANG_REQ_METH) {
 		__FRANG_CFG_VAR(m_mask, http_methods_mask);
 		if (m_mask) {
 			/* Method is not parsed yet. */
@@ -901,18 +899,18 @@ frang_http_req_process(FrangAcc *ra, TfwConn *conn, TfwFsmData *data)
 				__FRANG_FSM_POSTPONE();
 			r = frang_http_methods(req, ra, m_mask);
 		}
-		__FRANG_FSM_MOVE(TFW_FRANG_REQ_METH_ALLOWED);
+		__FRANG_FSM_MOVE(TFW_FRANG_REQ_URI);
 	}
 
 	/* Ensure that length of URI is within limits. */
-	T_FSM_STATE(TFW_FRANG_REQ_METH_ALLOWED) {
+	T_FSM_STATE(TFW_FRANG_REQ_URI) {
 		__FRANG_CFG_VAR(uri_len, http_uri_len);
 		if (uri_len) {
 			r = frang_http_uri_len(req, ra, uri_len);
 			if (!(req->uri_path.flags & TFW_STR_COMPLETE))
 				__FRANG_FSM_POSTPONE();
 		}
-		__FRANG_FSM_MOVE(TFW_FRANG_REQ_HDRS_INCOMPLETE);
+		__FRANG_FSM_MOVE(TFW_FRANG_REQ_HDRS);
 	}
 
 	/*
@@ -920,7 +918,7 @@ frang_http_req_process(FrangAcc *ra, TfwConn *conn, TfwFsmData *data)
 	 * Test that all currently received headers doesn't overcome frang
 	 * limits.
 	 */
-	T_FSM_STATE(TFW_FRANG_REQ_HDRS_INCOMPLETE) {
+	T_FSM_STATE(TFW_FRANG_REQ_HDRS) {
 		__FRANG_CFG_VAR(host_required, http_host_required);
 		__FRANG_CFG_VAR(ct_required, http_ct_required);
 		__FRANG_CFG_VAR(ct_vals, http_ct_vals);
@@ -945,36 +943,36 @@ frang_http_req_process(FrangAcc *ra, TfwConn *conn, TfwFsmData *data)
 		if (ct_required || ct_vals)
 			r = frang_http_ct_check(req, ra, ct_vals);
 
-		__FRANG_FSM_MOVE(TFW_FRANG_REQ_HDRS_ALLOWED);
+		__FRANG_FSM_MOVE(TFW_FRANG_REQ_BODY_START);
 	}
 
 	/*
 	 * Prepare for HTTP request body checks.
 	 * Set the time the body started coming in.
 	 */
-	T_FSM_STATE(TFW_FRANG_REQ_HDRS_ALLOWED) {
+	T_FSM_STATE(TFW_FRANG_REQ_BODY_START) {
 		req->chunk_cnt = 0; /* start counting body chunks now. */
 		req->tm_bchunk = jiffies;
-		__FRANG_FSM_MOVE(TFW_FRANG_REQ_BODY_INCOMPLETE);
+		__FRANG_FSM_MOVE(TFW_FRANG_REQ_BODY);
 	}
 
 	/*
 	 * Body is not fully parsed, a new body chunk was received.
 	 */
-	T_FSM_STATE(TFW_FRANG_REQ_BODY_INCOMPLETE) {
+	T_FSM_STATE(TFW_FRANG_REQ_BODY) {
 		if ((r = frang_http_req_incomplete_body_check(ra, conn, data)))
 			T_FSM_EXIT();
 		/* Body is not fully parsed yet. */
 		if (!(req->body.flags & TFW_STR_COMPLETE))
 			__FRANG_FSM_POSTPONE();
 
-		__FRANG_FSM_MOVE(TFW_FRANG_REQ_BODY_ALLOWED);
+		__FRANG_FSM_MOVE(TFW_FRANG_REQ_TRAILER);
 	}
 
 	/*
 	 * Body is fully parsed, but Trailer headers may appear.
 	 */
-	T_FSM_STATE(TFW_FRANG_REQ_BODY_ALLOWED) {
+	T_FSM_STATE(TFW_FRANG_REQ_TRAILER) {
 		r = frang_http_req_trailer_check(ra, conn, data);
 		if (!r)
 			__tfw_gfsm_move(&conn->state, TFW_FRANG_REQ_FSM_DONE);
