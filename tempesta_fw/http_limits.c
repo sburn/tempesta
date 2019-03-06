@@ -1121,7 +1121,7 @@ frang_resp_fwd_process(TfwHttpResp *resp)
 	spin_unlock(&ra->lock);
 
 	if (r == TFW_BLOCK) {
-		tfw_connection_close(req->conn, true);
+		tfw_cli_conn_close_all_sync((TfwClient *)req->conn->peer);
 		if (tfw_vhost_global_frang_cfg()->ip_block)
 			tfw_filter_block_ip(&FRANG_ACC2CLI(ra)->addr);
 	}
